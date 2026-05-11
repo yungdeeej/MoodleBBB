@@ -3,6 +3,68 @@
 
 ---
 
+## QUICK START ON REPLIT
+
+> **TL;DR:** Import this repo into Replit, paste your Secrets, click Run. The Express server boots on port 3000 (mapped to 80 publicly), the cron job auto-syncs new BBB recordings every 2 hours, and the BBB server pushes Learning Analytics Dashboard data straight to `/api/lad-callback`.
+
+### 1. Import into Replit
+- Go to **Replit → Create Repl → Import from GitHub** and paste this repo URL.
+- Replit will detect the `.replit` + `replit.nix` files and provision a Node.js 20 environment with `ffmpeg` available. No manual install step is needed — `npm install` runs automatically on first boot.
+- The `run` command is `node index.js` (already wired in `.replit`).
+
+### 2. Add Replit Secrets
+- In the Repl, open the **🔒 Secrets** panel (Tools → Secrets, or `Cmd/Ctrl+K → Secrets`) and add every key in the [REQUIRED REPLIT SECRETS](#required-replit-secrets) table below.
+- **Do not** put secrets in a `.env` file — Replit injects them as environment variables. `.env` files are gitignored anyway.
+- `REPLIT_DB_URL` is provided automatically — do not set it manually.
+- If you skip optional secrets (`SLACK_WEBHOOK_URL`, `MOODLE_*`), the app degrades gracefully and logs warnings rather than crashing.
+
+### 3. First boot
+- Click **Run**. You should see:
+  ```
+  [server] listening on http://0.0.0.0:3000
+  [cron] sync scheduled: 0 */2 * * *
+  ```
+- The public URL is shown in the Webview panel. The root path redirects to `/dashboard`.
+
+### 4. Get the public URL → tell your BBB admin
+- Replit gives every Repl a public URL like `https://<your-repl-name>.<your-username>.repl.co` (or a custom domain via Reserved VM / Deployments).
+- Pass `https://<your-public-url>/api/lad-callback` to your BBB admin to add to `bbb-web.properties` (see [BBB SERVER CONFIGURATION](#bbb-server-configuration-done-by-bbb-admin-one-time)).
+- BBB will POST the Learning Analytics Dashboard JSON to that endpoint when each meeting ends. The endpoint accepts up to 10MB JSON payloads.
+
+### 5. Seed instructors (optional but recommended)
+In the Replit **Shell** tab:
+```bash
+npm run seed                              # seeds a small example set
+npm run seed -- ./scripts/my-instructors.json   # seeds your own list
+```
+Schema for the JSON file is in `scripts/seed-instructors.js`.
+
+### 6. Trigger your first sync
+- From the dashboard: click **Trigger Sync** (top right).
+- Or from the Shell: `curl -X POST http://localhost:3000/api/sync`.
+- Sync runs in the background; watch the Repl console for per-stage logs.
+
+### 7. Health check
+- `GET /api/status` returns a single JSON with the configuration state of every external service, the cron schedule, and the running Claude spend total.
+- The **System** tab in the dashboard surfaces the same view visually — useful to glance at after import.
+
+### Deployment notes specific to Replit
+
+| Concern | Recommendation |
+|---|---|
+| **Always-on** | A free Repl sleeps after ~5 minutes of inactivity. Without Always-On the cron job won't fire and the BBB LAD callback won't be reachable. Use **Replit Reserved VM Deployment** (or "Always On" on Hacker plan) so the process stays up. |
+| **Storage** | Audio files are streamed to `/tmp` and deleted after transcription. `/tmp` lives on the Repl's local FS — do not rely on persistence there. Persistent data goes through Replit DB (`@replit/database`). |
+| **Replit DB size** | Replit DB has a 50 MB key/value cap. Final reports are ~8 KB and LAD payloads 5–20 KB, so the budget supports ~3,000 sessions of full retention. Wipe `transcript:*` keys older than the retention period to free space if you approach the cap. |
+| **Port binding** | The app binds `0.0.0.0:$PORT`. Replit's web proxy routes port 3000 → public port 80 (configured in `.replit [[ports]]`). Do **not** hardcode `localhost`. |
+| **Long sync jobs** | A full sync of multiple recordings can run for many minutes. Replit's HTTP timeout is 60s, so `POST /api/sync` returns immediately and the pipeline continues in the background. |
+| **Native deps** | `ffmpeg` is pre-installed via `replit.nix` — not used at boot, but available if you later add server-side audio conversion. |
+| **Module system** | The code is CommonJS (`require`/`module.exports`) — matches `"type": "commonjs"` in `package.json`. Don't mix ESM. |
+| **Restart safety** | All in-flight pipeline state is in Replit DB. A restart mid-pipeline will leave the recording **not** in `processed-ids`, so the next sync re-processes it. To opt out of that retry, manually add the recordID to `processed-ids` via the Shell. |
+| **Cron schedule** | Set `SYNC_CRON` to override the default `0 */2 * * *`. Set `DISABLE_CRON=true` to disable the in-process scheduler entirely (useful if you'd rather drive sync from Replit's scheduled tasks). |
+| **Custom domain** | If you serve this on a custom domain via Replit Deployments, the BBB callback URL must use that domain. The endpoint is `/api/lad-callback`. |
+
+---
+
 ## PROJECT OVERVIEW
 
 Build an automated instructor performance management system for MCG Career College that:
@@ -50,26 +112,35 @@ BBB Server → [getRecordings API polling] → Replit App
 
 ## REQUIRED REPLIT SECRETS
 
-Add these in Replit's Secrets panel before running:
+Add these in Replit's **🔒 Secrets** panel before running. The "Required?" column shows whether the app refuses to start (`Required`), refuses to use a specific feature (`Per-feature`), or runs with defaults (`Optional`).
 
-| Secret Key | Description | Example |
-|---|---|---|
-| `BBB_URL` | BBB server URL (without `/api`) | `https://bbb.mcgcollege.ca/bigbluebutton/` |
-| `BBB_SECRET` | Shared secret from `bbb-conf --secret` | `ECCJZNJWLPEA3YB6Y2LTQGQD3GJZ3F93` |
-| `ANTHROPIC_API_KEY` | Claude API key | `sk-ant-...` |
-| `DEEPGRAM_API_KEY` | Deepgram transcription | `<your key>` |
-| `MOODLE_BASE_URL` | Moodle URL (for instructor profile enrichment) | `https://learn.mcgcollege.ca` |
-| `MOODLE_API_TOKEN` | Moodle web services token | `<token>` |
-| `ADMIN_EMAIL` | Dean of Ops email for alerts | `dj@mcgcollege.ca` |
-| `ACADEMIC_DIRECTOR_EMAIL` | Academic Director email | `<email>` |
-| `SLACK_WEBHOOK_URL` | Optional — for instant alerts | `https://hooks.slack.com/...` |
-| `SMTP_USER` | Gmail/SMTP user for email alerts | `qa-system@mcgcollege.ca` |
-| `SMTP_PASS` | Gmail App Password | `<app password>` |
-| `MCG_INSTITUTION_NAME` | For report branding | `MCG Career College` |
-| `ALERT_THRESHOLD_SCORE` | Auto-flag below this score | `2.5` |
-| `MIN_DURATION_VARIANCE_PCT` | Flag classes cut short by this % | `-15` |
-| `MAX_RECORDING_DURATION_MIN` | Safety cap | `360` |
-| `MONTHLY_BUDGET_USD` | Hard stop for Claude spend | `300` |
+| Secret Key | Required? | Description | Example |
+|---|---|---|---|
+| `BBB_URL` | Required | BBB server URL (without `/api`) | `https://bbb.mcgcollege.ca/bigbluebutton/` |
+| `BBB_SECRET` | Required | Shared secret from `bbb-conf --secret` | `ECCJZNJWLPEA3YB6Y2LTQGQD3GJZ3F93` |
+| `ANTHROPIC_API_KEY` | Required | Claude API key | `sk-ant-...` |
+| `DEEPGRAM_API_KEY` | Required | Deepgram transcription | `<your key>` |
+| `MOODLE_BASE_URL` | Per-feature | Moodle URL (for instructor profile enrichment) | `https://learn.mcgcollege.ca` |
+| `MOODLE_API_TOKEN` | Per-feature | Moodle web services token | `<token>` |
+| `ADMIN_EMAIL` | Per-feature | Dean of Ops email for alerts | `dj@mcgcollege.ca` |
+| `ACADEMIC_DIRECTOR_EMAIL` | Per-feature | Academic Director email | `<email>` |
+| `HR_EMAIL` | Optional | HR escalation recipient (falls back to `ADMIN_EMAIL`) | `hr@mcgcollege.ca` |
+| `SLACK_WEBHOOK_URL` | Optional | For instant alerts | `https://hooks.slack.com/...` |
+| `SMTP_USER` | Per-feature | Gmail/SMTP user for email alerts | `qa-system@mcgcollege.ca` |
+| `SMTP_PASS` | Per-feature | Gmail App Password (16-char, **not** your account password) | `<app password>` |
+| `SMTP_HOST` | Optional | Override SMTP host (defaults to `smtp.gmail.com`) | `smtp.gmail.com` |
+| `SMTP_PORT` | Optional | Override SMTP port (defaults to `465`) | `465` |
+| `MCG_INSTITUTION_NAME` | Optional | For report branding | `MCG Career College` |
+| `ALERT_THRESHOLD_SCORE` | Optional | Auto-flag below this score | `2.5` |
+| `MIN_DURATION_VARIANCE_PCT` | Optional | Flag classes cut short by this % | `-15` |
+| `MAX_RECORDING_DURATION_MIN` | Optional | Safety cap | `360` |
+| `MONTHLY_BUDGET_USD` | Optional | Hard stop for Claude spend | `300` |
+| `SYNC_CRON` | Optional | Override the cron schedule | `0 */2 * * *` |
+| `DISABLE_CRON` | Optional | Set to `true` to disable in-process scheduling | `false` |
+| `PORT` | Auto | Set by Replit. Default `3000`. Don't override. | `3000` |
+| `REPLIT_DB_URL` | Auto | Set by Replit. Don't override or commit. | *(provided)* |
+
+> **Note on Replit DB fallback:** If `REPLIT_DB_URL` isn't present (e.g. running locally), `src/db.js` falls back to an in-memory store and prints a loud warning. Data does **not** persist across restarts in that mode. Use the Replit cloud environment for any non-test run.
 
 ---
 

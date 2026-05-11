@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Override — Instructor Mapping</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    async function fetchJson(url, opts) {
+      const r = await fetch(url, opts);
+      if (!r.ok) throw new Error(`${url} → ${r.status}: ${await r.text()}`);
+      return r.json();
+    }
+
+    function App() {
+      const [analyses, setAnalyses] = useState([]);
+      const [instructors, setInstructors] = useState([]);
+      const [needsReview, setNeedsReview] = useState([]);
+      const [actor, setActor] = useState('');
+      const [message, setMessage] = useState(null);
+
+      async function refresh() {
+        const [a, i, n] = await Promise.all([
+          fetchJson('/api/analyses'),
+          fetchJson('/api/instructors'),
+          fetchJson('/api/needs-review'),
+        ]);
+        setAnalyses(a.analyses || []);
+        setInstructors(i.instructors || []);
+        setNeedsReview(n.instructors || []);
+      }
+      useEffect(() => { refresh(); }, []);
+
+      async function apply(recordID, newInstructorEmail) {
+        try {
+          await fetchJson('/api/admin/override', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ recordID, newInstructorEmail, actor: actor || 'admin' }),
+          });
+          setMessage({ type: 'ok', text: `Reassigned ${recordID} → ${newInstructorEmail}` });
+          await refresh();
+        } catch (err) {
+          setMessage({ type: 'err', text: err.message });
+        }
+      }
+
+      return (
+        <div className="max-w-6xl mx-auto p-6">
+          <header className="mb-6">
+            <a className="text-sm text-slate-500" href="/dashboard">← Back to dashboard</a>
+            <h1 className="text-2xl font-bold">Admin Override</h1>
+            <p className="text-sm text-slate-600">
+              Reassign a recording's analysis to a different instructor when the LAD moderator
+              flag is wrong (e.g. an admin joined as moderator, or two instructors co-taught).
+              Overrides are audit-logged.
+            </p>
+          </header>
+
+          <div className="bg-amber-50 border border-amber-200 rounded p-3 mb-4 text-sm">
+            <strong>Note:</strong> Overriding rewrites the instructor on the analysis but does
+            <em> not </em> back out the previous instructor's history entry. Reach out to the
+            previous instructor's manager before applying if appropriate.
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium">Your name / role (for audit log)</label>
+            <input className="border rounded px-2 py-1 text-sm w-64" value={actor} onChange={e => setActor(e.target.value)} placeholder="e.g. DJ — Dean of Ops" />
+          </div>
+
+          {message && (
+            <div className={`p-3 rounded mb-4 ${message.type === 'ok' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
+              {message.text}
+            </div>
+          )}
+
+          <h2 className="text-lg font-semibold mt-4 mb-2">Stub instructors needing review ({needsReview.length})</h2>
+          <div className="bg-white border rounded overflow-x-auto mb-6">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-left">
+                <tr><th className="p-2">Stub email</th><th className="p-2">Stub name</th><th className="p-2">Created via</th><th className="p-2">Created at</th></tr>
+              </thead>
+              <tbody>
+                {needsReview.map(i => (
+                  <tr key={i.email} className="border-t">
+                    <td className="p-2">{i.email}</td>
+                    <td className="p-2">{i.name}</td>
+                    <td className="p-2">{i.createdFrom}</td>
+                    <td className="p-2">{i.createdAt}</td>
+                  </tr>
+                ))}
+                {!needsReview.length && <tr><td colSpan={4} className="p-4 text-center text-slate-500">No stubs.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+
+          <h2 className="text-lg font-semibold mb-2">Recent sessions — reassign</h2>
+          <div className="bg-white border rounded overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-left">
+                <tr>
+                  <th className="p-2">Date</th>
+                  <th className="p-2">RecordID</th>
+                  <th className="p-2">Current instructor</th>
+                  <th className="p-2">Course</th>
+                  <th className="p-2 w-72">Reassign to</th>
+                </tr>
+              </thead>
+              <tbody>
+                {analyses.map(a => (
+                  <Row key={a.recordID} analysis={a} instructors={instructors} onApply={apply} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function Row({ analysis, instructors, onApply }) {
+      const [target, setTarget] = useState('');
+      return (
+        <tr className="border-t">
+          <td className="p-2">{analysis.sessionDate || '—'}</td>
+          <td className="p-2 font-mono text-xs">{analysis.recordID}</td>
+          <td className="p-2">{analysis.instructorName} <span className="text-slate-500">&lt;{analysis.instructorEmail}&gt;</span></td>
+          <td className="p-2">{analysis.courseCode || analysis.courseName || '—'}</td>
+          <td className="p-2">
+            <div className="flex gap-2">
+              <select className="border rounded px-2 py-1 text-sm flex-1" value={target} onChange={e => setTarget(e.target.value)}>
+                <option value="">— pick instructor —</option>
+                {instructors.map(i => <option key={i.email} value={i.email}>{i.name} ({i.email})</option>)}
+              </select>
+              <button
+                className="px-3 py-1 text-sm bg-slate-900 text-white rounded disabled:opacity-50"
+                disabled={!target}
+                onClick={() => onApply(analysis.recordID, target)}>
+                Apply
+              </button>
+            </div>
+          </td>
+        </tr>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
