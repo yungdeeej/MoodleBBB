@@ -1,0 +1,38 @@
+{
+  "name": "mcg-instructor-qa",
+  "version": "1.0.0",
+  "description": "MCG Career College — Instructor Performance Management System. Pulls BBB recordings, transcribes via Deepgram, analyzes with Claude Sonnet 4.5, and produces evidentiary performance reports.",
+  "main": "index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "seed": "node scripts/seed-instructors.js",
+    "test:bbb": "node scripts/test-bbb.js",
+    "test:moodle": "node scripts/test-moodle.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.1",
+    "@deepgram/sdk": "^3.9.0",
+    "@replit/database": "^3.0.0",
+    "axios": "^1.7.7",
+    "express": "^4.21.0",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^6.9.15",
+    "xml2js": "^0.6.2"
+  },
+  "keywords": [
+    "bigbluebutton",
+    "moodle",
+    "deepgram",
+    "claude",
+    "instructor-qa",
+    "performance-management",
+    "replit"
+  ],
+  "license": "UNLICENSED",
+  "private": true
+}

@@ -1,0 +1,41 @@
+run = "node index.js"
+entrypoint = "index.js"
+modules = ["nodejs-20"]
+hidden = [".config", "package-lock.json", "node_modules"]
+
+[nix]
+channel = "stable-24_05"
+
+[env]
+PORT = "3000"
+NODE_ENV = "production"
+
+[deployment]
+deploymentTarget = "cloudrun"
+run = ["sh", "-c", "node index.js"]
+build = ["sh", "-c", "npm install"]
+ignorePorts = false
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
+[unitTest]
+language = "nodejs"
+
+[languages.javascript]
+pattern = "**/{*.js,*.mjs,*.cjs}"
+
+[languages.javascript.languageServer]
+start = "typescript-language-server --stdio"
+
+[gitHubImport]
+requiredFiles = [".replit", "replit.nix", "package.json"]
+
+[packager]
+language = "nodejs"
+
+[packager.features]
+packageSearch = true
+guessImports = true
+enabledForHosting = false
